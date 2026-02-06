@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+venv/
+env/
+usb_tech/
+usb_juridique/
+vault.json
+cards.db.enc
+cards.db
+.DS_Store
+.vscode/
