@@ -3,7 +3,9 @@ import sys
 import json
 import getpass
 import crypto_utils
+import audit
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+import audit
 
 def select_role(domain):
     """Menu pour choisir entre Titulaire et Suppléant"""
@@ -79,6 +81,13 @@ def service_1_i_mise_en_service():
         
         master_key = aesgcm.decrypt(nonce, ciphertext, None)
 
+        # [AJOUT AUDIT]
+        audit.log_event(
+            event_type="AUTH_SUCCESS",
+            user_context=f"Slot #{target_slot_id} ({target_slot['description']})",
+            description="Master Key déchiffrée et chargée en RAM."
+        )
+
         # 6. Écriture en RAM
         with open(crypto_utils.RAM_DISK_PATH, "wb") as f:
             f.write(master_key)
@@ -87,6 +96,13 @@ def service_1_i_mise_en_service():
         print("\n[SUCCÈS] Authentification Validée.")
         print(f"[AUDIT] Accès autorisé via le profil : {target_slot['description']}")
         print(f"[SECURE] Master Key chargée en RAM via le Slot {target_slot_id}.")
+        audit.log_event(
+            event_type="AUTH_SUCCESS",
+            user_context=f"Slot #{target_slot_id} ({target_slot['description']})",
+            description="Master Key déchiffrée et chargée en RAM."
+        )
+
+        print("\n[SUCCÈS] Authentification Validée.")
 
     except Exception as e:
         print(f"\n[ÉCHEC CRITIQUE] Authentification refusée : {e}")
@@ -104,6 +120,10 @@ def service_1_ii_ajouter():
         db[nom] = num
         
         crypto_utils.save_database(db, mk)
+
+        # [AJOUT AUDIT] - On ne log pas le nom du client (Confidentialité !), juste l'ID ou le fait qu'on a ajouté.
+        audit.log_event("DATA_WRITE", "OPERATOR", f"Ajout d'une nouvelle carte (Hash: {hash(num)})")
+        
         print(f"[OK] Carte ajoutée pour {nom}.")
         
     except Exception as e:
@@ -223,6 +243,13 @@ def service_1_vi_revocation():
         print(f"\n[SUCCÈS] Révocation effectuée.")
         print(f" - Slots restants : {len(surviving_slots)}")
         print(f" - L'acteur '{target_role}' ne pourra plus jamais participer au déchiffrement.")
+
+        # [AJOUT AUDIT]
+        audit.log_event(
+            event_type="REVOCATION",
+            user_context="ADMIN_QUORUM", # Car validé par les titulaires
+            description=f"Destruction des droits pour le rôle : {target_role}. Slots restants : {len(surviving_slots)}"
+        )
     else:
         print("[ANNULATION] Aucune modification effectuée.")
 
@@ -247,8 +274,8 @@ def main_menu():
         elif choix == "4": service_1_iv_chercher()
         elif choix == "6": service_1_vi_revocation()
         elif choix == "5":
-            if os.path.exists(crypto_utils.RAM_DISK_PATH):
-                os.remove(crypto_utils.RAM_DISK_PATH)
+            crypto_utils.secure_wipe_ram()
+            audit.log_event("SYSTEM", "SYSTEM", "Arrêt du serveur et purge RAM.")
             sys.exit(0)
 
 if __name__ == "__main__":

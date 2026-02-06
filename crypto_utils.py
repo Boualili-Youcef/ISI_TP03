@@ -110,3 +110,14 @@ def load_database(mk: bytes) -> dict:
         return json.loads(plaintext.decode('utf-8'))
     except Exception:
         raise ValueError("[SECURITE] ALERTE INTEGRITE : Échec du déchiffrement (Clé incorrecte ou fichier altéré).")
+    
+def secure_wipe_ram():
+    """Écrase la clé en RAM avec du bruit avant de supprimer le fichier"""
+    if os.path.exists(RAM_DISK_PATH):
+        # 1. Écrasement (Shredding)
+        file_size = os.path.getsize(RAM_DISK_PATH)
+        with open(RAM_DISK_PATH, "wb") as f:
+            f.write(os.urandom(file_size))
+        
+        # 2. Suppression
+        os.remove(RAM_DISK_PATH)
