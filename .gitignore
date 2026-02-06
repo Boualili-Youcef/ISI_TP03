@@ -4,6 +4,7 @@ venv/
 env/
 usb_tech/
 usb_juridique/
+usb_*/
 vault.json
 cards.db.enc
 cards.db

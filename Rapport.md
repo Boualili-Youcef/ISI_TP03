@@ -136,3 +136,108 @@ L'extrait ci-dessous, issu de notre module `crypto_utils.py`, démontre le méca
 int_pass = int.from_bytes(pass_hash, "big")
 int_usb = int.from_bytes(usb_secret, "big")
 xor_result = int_pass ^ int_usb  # Opération atomique en mémoire
+```
+### 3. Évolution de l'Architecture : Gestion des Délégations
+
+### 3.1. Réponse à la Question 3 : Concept des Slots d'Accès Multiples
+
+**Problématique :**
+La continuité de service exige que des représentants puissent se substituer aux responsables titulaires en cas d'indisponibilité. Cependant, les normes de sécurité interdisent formellement le partage de secrets (mots de passe ou tokens physiques) entre un responsable et son représentant. Le système doit garantir l'imputabilité des actions et discriminer l'identité exacte des acteurs présents lors de la mise en service.
+
+**Solution Proposée : Architecture Multi-Slots (Standard LUKS)**
+Nous proposons une évolution du format du coffre numérique (`vault.json`) pour passer d'un chiffrement unique à une architecture à **Slots de Clés (Key Slots)**.
+
+*   **Unicité des Identifiants :** Chaque acteur (Responsable Technique $R_T$, Représentant Technique $r_t$, Responsable Juridique $R_J$, Représentant Juridique $r_j$) possède son propre couple de facteurs (Mot de passe + Clé USB). Aucun secret n'est partagé.
+*   **Duplication Sécurisée de la MK :** La Clé Maîtresse ($K_{Master}$) reste unique pour le déchiffrement des données. Cependant, elle est chiffrée plusieurs fois, avec des clés de déverrouillage (KEK) différentes, et stockée dans des emplacements distincts (Slots).
+*   **Discrimination :** L'ouverture d'un slot spécifique permet au système d'identifier formellement le binôme présent, sans confusion possible.
+
+### 3.2. Matrice des Droits d'Accès
+
+Le système autorise l'ouverture du coffre si et seulement si une combinaison valide de facteurs est présentée. Nous définissons 4 "Slots" correspondant aux 4 binômes autorisés par la politique de sécurité :
+
+| Slot ID | Facteur A (Technique) | Facteur B (Juridique) | Calcul de la KEK |
+| :---: | :--- | :--- | :--- |
+| **0** | Responsable ($R_T$) | Responsable ($R_J$) | $K_{Resp_A}(R_T) \oplus K_{Resp_B}(R_J)$ |
+| **1** | Responsable ($R_T$) | Représentant ($r_j$) | $K_{Resp_A}(R_T) \oplus K_{Resp_B}(r_j)$ |
+| **2** | Représentant ($r_t$) | Responsable ($R_J$) | $K_{Resp_A}(r_t) \oplus K_{Resp_B}(R_J)$ |
+| **3** | Représentant ($r_t$) | Représentant ($r_j$) | $K_{Resp_A}(r_t) \oplus K_{Resp_B}(r_j)$ |
+
+> **Note :** Quel que soit le slot utilisé, le déchiffrement aboutit toujours à la même $K_{Master}$ en mémoire vive.
+
+### 3.3. Structure de Données Étendue (JSON Schema V2)
+
+L'architecture du fichier `vault.json` évolue pour supporter cette discrimination. Chaque slot contient ses propres métadonnées (Nonce) et son propre cryptogramme.
+
+```json
+{
+  "version": 2,
+  "algo": "AES-256-GCM",
+  "global_salt": "a1b2c3d4...", 
+  "slots": [
+    {
+      "id": 0,
+      "actors_signature": "RespTech_RespJur",
+      "nonce": "unique_nonce_0...",
+      "ciphertext": "MasterKey_Encrypted_By_KEK0..."
+    },
+    {
+      "id": 1,
+      "actors_signature": "RespTech_ReprJur",
+      "nonce": "unique_nonce_1...",
+      "ciphertext": "MasterKey_Encrypted_By_KEK1..."
+    }
+    // ... (Slots 2 et 3)
+  ]
+}
+```
+
+### 3.4. Diagramme de la Solution (Extension Délégation)
+
+La figure ci-dessous illustre le mécanisme de sélection de slot. Le système tente de déchiffrer les slots séquentiellement avec les secrets fournis. La réussite sur un slot spécifique (ex: Slot 2) prouve cryptographiquement l'identité des présents (ex: Représentant Tech + Responsable Juridique).
+
+```mermaid
+flowchart TD
+    subgraph Saisie [Saisie des Identifiants]
+        InputA[Facteurs Acteur A] 
+        InputB[Facteurs Acteur B]
+    end
+
+    subgraph Derivation [Dérivation KEK Candidate]
+        KDFA[Argon2id + XOR]
+        KDFB[Argon2id + XOR]
+        KEK_C[KEK Candidate]
+    end
+
+    subgraph Vault [Table des Slots vault.json]
+        Slot0[Slot 0 : Resp/Resp]
+        Slot1[Slot 1 : Resp/Rep]
+        Slot2[Slot 2 : Rep/Resp]
+        Slot3[Slot 3 : Rep/Rep]
+    end
+
+    InputA --> KDFA
+    InputB --> KDFB
+    KDFA & KDFB --> KEK_C
+
+    KEK_C -.->|Tentative Déchiffrement| Slot0
+    KEK_C -.->|Tentative Déchiffrement| Slot1
+    KEK_C -.->|Tentative Déchiffrement| Slot2
+    KEK_C -.->|Tentative Déchiffrement| Slot3
+
+    Slot0 -- Echec (Tag Error) --> Next1[Ignorer]
+    Slot1 -- Echec (Tag Error) --> Next2[Ignorer]
+    Slot2 -- SUCCÈS (Auth Tag OK) --> MK[MASTER KEY]
+    Slot3 -- Echec (Tag Error) --> Next3[Ignorer]
+
+    style MK fill:#bbf,stroke:#333,stroke-width:2px
+```
+
+### 3.5. Garantie de Discrimination et Non-Confusion
+
+Cette architecture répond strictement à l'exigence de non-confusion :
+
+1.  **Discrimination à la source :** Les clés USB et les mots de passe des représentants sont cryptographiquement distincts de ceux des responsables.
+2.  **Validation par le chiffrement :** Il est mathématiquement impossible d'ouvrir le Slot 0 avec les identifiants du Slot 3. Le tag d'authentification GCM échouera immédiatement.
+3.  **Auditabilité :** Le système enregistre quel slot a été utilisé pour déverrouiller la Master Key, permettant de savoir exactement qui a autorisé le démarrage du service, sans ambiguïté.
+
+

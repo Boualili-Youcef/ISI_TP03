@@ -5,58 +5,92 @@ import getpass
 import crypto_utils
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+def select_role(domain):
+    """Menu pour choisir entre Titulaire et Suppléant"""
+    print(f"\n--- Qui est le représentant {domain} ? ---")
+    print("1. Responsable Titulaire")
+    print("2. Représentant Suppléant")
+    while True:
+        choice = input("Votre choix (1/2) : ")
+        if choice == "1":
+            return "MAIN"
+        elif choice == "2":
+            return "REP"
+
 def service_1_i_mise_en_service():
-    """Authentifie les responsables et déchiffre la MK en RAM"""
-    print("\n--- SERVICE 1.i : MISE EN SERVICE (DÉMARRAGE) ---")
+    """Version Multi-Slots : Identifie les acteurs et ouvre le bon slot"""
+    print("\n--- SERVICE 1.i : CÉRÉMONIE DES CLÉS (MULTI-SLOTS) ---")
     
     if not os.path.exists("vault.json"):
-        print("[ERREUR] Système non initialisé. Lancez setup.py d'abord.")
+        print("[ERREUR] Système non initialisé.")
         return
 
-    # 1. Chargement du Vault
     with open("vault.json", "r") as f:
         vault = json.load(f)
-    salt = bytes.fromhex(vault["salt"])
+    
+    salt = bytes.fromhex(vault["global_salt"])
 
-    # 2. Authentification 2FA Simultanée
+    # 1. Identification des Acteurs (Discrimination)
+    # Le système demande explicitement qui est là.
+    role_tech = select_role("TECHNIQUE")
+    role_jur = select_role("JURIDIQUE")
+
+    # 2. Saisie des Facteurs
     try:
-        # Responsable A
-        print(">> Authentification Responsable TECHNIQUE")
-        usb_path_a = input("Chemin Clé USB (ex: usb_tech/keyfile.bin) : ")
+        print(f"\n>> Authentification {role_tech} (TECH)")
+        usb_path_a = input("Chemin Clé USB : ")
         pass_a = getpass.getpass("Mot de passe : ")
         part_a = crypto_utils.derive_part(pass_a, usb_path_a, salt)
 
-        # Responsable B
-        print(">> Authentification Responsable JURIDIQUE")
-        usb_path_b = input("Chemin Clé USB (ex: usb_juridique/keyfile.bin) : ")
+        print(f"\n>> Authentification {role_jur} (JURIDIQUE)")
+        usb_path_b = input("Chemin Clé USB : ")
         pass_b = getpass.getpass("Mot de passe : ")
         part_b = crypto_utils.derive_part(pass_b, usb_path_b, salt)
 
-        # 3. Reconstruction de la KEK
+        # 3. Détermination du Slot Cible
+        # Logique de mapping : 
+        # MAIN+MAIN=0, MAIN+REP=1, REP+MAIN=2, REP+REP=3
+        target_slot_id = 0
+        if role_tech == "MAIN" and role_jur == "MAIN": target_slot_id = 0
+        if role_tech == "MAIN" and role_jur == "REP":  target_slot_id = 1
+        if role_tech == "REP"  and role_jur == "MAIN": target_slot_id = 2
+        if role_tech == "REP"  and role_jur == "REP":  target_slot_id = 3
+
+        print(f"\n[SYSTEM] Tentative d'ouverture du Slot #{target_slot_id}...")
+
+        # 4. Récupération des données du Slot
+        target_slot = None
+        for slot in vault["slots"]:
+            if slot["slot_id"] == target_slot_id:
+                target_slot = slot
+                break
+        
+        if not target_slot:
+            raise ValueError("Slot introuvable dans le Vault.")
+
+        # 5. Calcul de la KEK et Déchiffrement
         int_a = int.from_bytes(part_a, "big")
         int_b = int.from_bytes(part_b, "big")
         kek = (int_a ^ int_b).to_bytes(32, "big")
 
-        # 4. Déchiffrement de la Master Key
         aesgcm = AESGCM(kek)
-        nonce = bytes.fromhex(vault["nonce"])
-        ciphertext = bytes.fromhex(vault["ciphertext"])
+        nonce = bytes.fromhex(target_slot["nonce"])
+        ciphertext = bytes.fromhex(target_slot["ciphertext"])
         
         master_key = aesgcm.decrypt(nonce, ciphertext, None)
-        
-        # 5. Stockage en RAM Disk (Simulé dans /dev/shm)
-        # On définit les droits en lecture seule pour l'utilisateur courant (0o600)
+
+        # 6. Écriture en RAM
         with open(crypto_utils.RAM_DISK_PATH, "wb") as f:
             f.write(master_key)
-        os.chmod(crypto_utils.RAM_DISK_PATH, 0o600) 
+        os.chmod(crypto_utils.RAM_DISK_PATH, 0o600)
 
-        print("\n[SUCCÈS] Authentification réussie.")
-        print(f"[SECURE] Master Key chargée en RAM ({crypto_utils.RAM_DISK_PATH}).")
-        print("Le serveur est prêt à traiter les paiements.")
+        print("\n[SUCCÈS] Authentification Validée.")
+        print(f"[AUDIT] Accès autorisé via le profil : {target_slot['description']}")
+        print(f"[SECURE] Master Key chargée en RAM via le Slot {target_slot_id}.")
 
     except Exception as e:
-        print(f"\n[ÉCHEC] Authentification impossible : {e}")
-        print("Alerte de sécurité : Tentative d'accès échouée.")
+        print(f"\n[ÉCHEC CRITIQUE] Authentification refusée : {e}")
+        print("Vérifiez que les bonnes personnes utilisent les bons slots.")
 
 def service_1_ii_ajouter():
     print("\n--- SERVICE 1.ii : AJOUTER UNE PAIRE ---")
