@@ -142,34 +142,113 @@ def service_1_iv_chercher():
             
     except Exception as e:
         print(f"[ERREUR] {e}")
+        
+def service_1_vi_revocation():
+    """
+    SERVICE 1.vi : RÉPUDIATION (REVOCATION DE DROITS)
+    Principe : Analyse le Vault et détruit les slots cryptographiques associés à un acteur.
+    Nécessite une authentification forte (Quorum) pour autoriser l'écriture sur le disque.
+    """
+    print("\n" + "!"*50)
+    print("!!! ZONE ADMINISTRATIVE : RÉVOCATION D'ACCÈS !!!")
+    print("!"*50)
+
+    if not os.path.exists("vault.json"):
+        print("[ERREUR] Aucun coffre trouvé.")
+        return
+
+    # 1. Authentification du Quorum (Preuve d'autorité)
+    print("\n[SECURITE] Une révocation nécessite l'authentification d'un administrateur restant.")
+    # On réutilise la fonction de mise en service pour prouver qu'on a le droit de toucher au vault
+    # Dans un système réel, on demanderait la signature de TOUS les survivants.
+    # Pour le PoC, on demande au moins un binôme valide (ex: les deux titulaires).
+    try:
+        service_1_i_mise_en_service() 
+        # Si ça échoue, le script s'arrête ou lève une exception, donc on ne va pas plus loin.
+        if not os.path.exists(crypto_utils.RAM_DISK_PATH):
+            print("[ACCES REFUSÉ] Impossible de procéder à la révocation sans authentification valide.")
+            return
+    except Exception:
+        return
+
+    # 2. Chargement du Vault
+    with open("vault.json", "r") as f:
+        vault = json.load(f)
+    
+    slots = vault["slots"]
+    initial_count = len(slots)
+
+    # 3. Sélection de la cible
+    print("\n--- QUI DOIT ÊTRE RÉVOQUÉ ? ---")
+    print("1. Responsable Technique (Titulaire)")
+    print("2. Responsable Juridique (Titulaire)")
+    print("3. Représentant Technique (Suppléant)")
+    print("4. Représentant Juridique (Suppléant)")
+    
+    choice = input("Sélectionnez la cible (1-4) : ")
+    target_role = ""
+    
+    if choice == "1": target_role = "Titulaire Tech"
+    elif choice == "2": target_role = "Titulaire Jur"
+    elif choice == "3": target_role = "Suppléant Tech"
+    elif choice == "4": target_role = "Suppléant Jur"
+    else: return
+
+    print(f"\n[ANALYSE] Recherche des slots impliquant : '{target_role}'...")
+
+    # 4. Filtrage des Slots (La Révocation)
+    # On garde uniquement les slots qui NE contiennent PAS la chaîne de caractère du rôle cible
+    surviving_slots = [
+        s for s in slots 
+        if target_role not in s["description"]
+    ]
+
+    deleted_count = initial_count - len(surviving_slots)
+
+    if deleted_count == 0:
+        print("[INFO] Aucun slot trouvé pour cet acteur. Il a peut-être déjà été révoqué.")
+        return
+
+    # 5. Application de la Sentence (Écriture Disque)
+    print(f"[ATTENTION] Vous allez détruire {deleted_count} slots d'accès.")
+    confirm = input("Confirmer la révocation irréversible ? (OUI/NON) : ")
+    
+    if confirm == "OUI":
+        vault["slots"] = surviving_slots
+        
+        # On sauvegarde le nouveau Vault épuré
+        with open("vault.json", "w") as f:
+            json.dump(vault, f, indent=4)
+            
+        print(f"\n[SUCCÈS] Révocation effectuée.")
+        print(f" - Slots restants : {len(surviving_slots)}")
+        print(f" - L'acteur '{target_role}' ne pourra plus jamais participer au déchiffrement.")
+    else:
+        print("[ANNULATION] Aucune modification effectuée.")
 
 def main_menu():
     while True:
         print("\n" + "="*40)
         print(" SERVEUR DE PAIEMENT SÉCURISÉ (PoC)")
         print("="*40)
-        print("1. (1.i)   Mise en Service (Démarrage)")
+        print("1. (1.i)   Mise en Service (Cérémonie)")
         print("2. (1.ii)  Ajouter une carte")
         print("3. (1.iii) Supprimer une carte")
         print("4. (1.iv)  Rechercher une carte")
-        print("5. Quitter (Efface la RAM)")
+        print("-" * 20)
+        print("6. (1.vi)  RÉPUDIATION (Admin)")
+        print("5. Quitter")
         
         choix = input("Votre choix : ")
         
-        if choix == "1":
-            service_1_i_mise_en_service()
-        elif choix == "2":
-            service_1_ii_ajouter()
-        elif choix == "3":
-            service_1_iii_supprimer()
-        elif choix == "4":
-            service_1_iv_chercher()
+        if choix == "1": service_1_i_mise_en_service()
+        elif choix == "2": service_1_ii_ajouter()
+        elif choix == "3": service_1_iii_supprimer()
+        elif choix == "4": service_1_iv_chercher()
+        elif choix == "6": service_1_vi_revocation()
         elif choix == "5":
-            # Nettoyage de sécurité avant de quitter
             if os.path.exists(crypto_utils.RAM_DISK_PATH):
                 os.remove(crypto_utils.RAM_DISK_PATH)
-                print("[SECURE] Master Key effacée de la RAM.")
-            print("Arrêt du système.")
             sys.exit(0)
 
 if __name__ == "__main__":

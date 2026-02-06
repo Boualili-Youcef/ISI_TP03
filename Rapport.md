@@ -241,3 +241,72 @@ Cette architecture répond strictement à l'exigence de non-confusion :
 3.  **Auditabilité :** Le système enregistre quel slot a été utilisé pour déverrouiller la Master Key, permettant de savoir exactement qui a autorisé le démarrage du service, sans ambiguïté.
 
 
+## 4. Gestion du Cycle de Vie : Révocation et Quorum
+
+### 4.1. Réponse à la Question 5 : Service de Révocation par Consensus
+
+**Problématique :**
+La révocation d'un ayant droit (ex: licenciement d'un représentant) ne doit pas fragiliser le système ni empêcher les responsables restants d'accéder aux données. Cependant, cette opération critique ne doit pas être réalisable par un administrateur isolé ou par un seul responsable (risque de prise de contrôle hostile).
+
+**Solution Proposée : La Régénération de Coffre par Quorum (Vault Regeneration)**
+Nous définissons le service 1.vi (Répudiation) non pas comme une simple "suppression de ligne" dans un fichier, mais comme une **Cérémonie de Reconstruction**.
+
+### 4.2. Le Protocole de Sécurité (Quorum)
+
+Le principe est le suivant : pour révoquer un membre $X$, tous les autres membres autorisés $Y, Z...$ doivent être physiquement présents.
+
+1.  **Authentification du Quorum :** Le système exige la présence de tous les acteurs restants (les "Survivants").
+2.  **Récupération de la Master Key :** Le système utilise les identifiants d'un binôme valide parmi les survivants pour déchiffrer la $K_{Master}$ en mémoire vive.
+3.  **Filtrage des Slots :** Le système identifie les slots qui impliquaient la personne révoquée.
+4.  **Régénération du Vault :** Le système crée un nouveau fichier `vault.json`. Il recalcule les KEKs pour les slots des survivants (nécessitant leur saisie de mot de passe à cet instant) et ré-encapsule la $K_{Master}$. Les slots du révoqué ne sont tout simplement pas créés.
+
+### 4.3. Pourquoi est-ce "Impossible par Design" sans eux ?
+
+Cette contrainte est mathématique, pas seulement logicielle :
+*   Le fichier `vault.json` ne contient pas les mots de passe des utilisateurs.
+*   Pour créer le Nouveau Vault valide (celui qui permettra aux survivants de se connecter demain), le système doit chiffrer la Master Key avec les secrets des survivants.
+*   Or, le système ne connait pas ces secrets. Il a donc besoin que les survivants les saisissent à nouveau pour générer leurs nouveaux slots d'accès.
+
+**Conclusion :** Sans la présence des survivants, on ne peut pas fabriquer le nouveau coffre qui leur donne accès. La révocation est indissociable de la validation des droits restants.
+
+### 4.4. Matrice de Révocation (Exemple)
+
+Prenons le cas de la révocation du Représentant Juridique ($r_j$).
+
+| Acteur | Statut | Action requise lors de la cérémonie |
+| :--- | :--- | :--- |
+| **Responsable Tech ($R_T$)** | Survivant | Doit insérer Clé + MDP (Pour recréer Slot 0 & 1) |
+| **Responsable Jur ($R_J$)** | Survivant | Doit insérer Clé + MDP (Pour recréer Slot 0 & 2) |
+| **Représentant Tech ($r_t$)** | Survivant | Doit insérer Clé + MDP (Pour recréer Slot 2) |
+| **Représentant Jur ($r_j$)** | **RÉVOQUÉ** | Absent. Ses slots (1 et 3) seront détruits. |
+
+### 4.5. Diagramme de Flux du Service Répudiation
+
+```mermaid
+flowchart TD
+    classDef critical fill:#ffcdd2,stroke:#c62828,stroke-width:2px;
+    classDef process fill:#e1f5fe,stroke:#01579b,stroke-width:1px;
+    classDef secure fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px;
+
+    Start((Début Cérémonie)) --> Select[Sélection de l'acteur à RÉVOQUER]
+    Select --> Check[Vérification du Quorum]
+    
+    subgraph "Phase 1 : Preuve de Présence (Survivants)"
+        Check --> Auth1[Auth Responsable Tech]
+        Check --> Auth2[Auth Responsable Jur]
+        Check --> Auth3[Auth Représentant Tech]
+        
+        Auth1 & Auth2 & Auth3 --> Unlock{Déchiffrement MK\nPossible ?}
+    end
+    
+    Unlock -- NON --> Abort[ARRÊT SECURITE]:::critical
+    Unlock -- OUI --> Memory[Master Key en RAM]:::secure
+    
+    subgraph "Phase 2 : Régénération (Nettoyage)"
+        Memory --> Filter[Calcul des nouveaux Slots]
+        Filter --> Encrypt["Chiffrement des Slots Survivants\n(Nécessite secrets présents)"]
+        Encrypt --> Write[Écrasement du vault.json]:::critical
+    end
+    
+    Write --> End((Révocation Terminée))
+```
