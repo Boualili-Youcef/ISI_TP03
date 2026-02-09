@@ -8,5 +8,8 @@ usb_*/
 vault.json
 cards.db.enc
 cards.db
+secure_audit.log
+secure_audit.log.*
+/dev/shm/secure_server_key
 .DS_Store
 .vscode/

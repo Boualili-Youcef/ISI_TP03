@@ -137,7 +137,7 @@ int_pass = int.from_bytes(pass_hash, "big")
 int_usb = int.from_bytes(usb_secret, "big")
 xor_result = int_pass ^ int_usb  # Opération atomique en mémoire
 ```
-### 3. Évolution de l'Architecture : Gestion des Délégations
+## 3. Évolution de l'Architecture : Gestion des Délégations
 
 ### 3.1. Réponse à la Question 3 : Concept des Slots d'Accès Multiples
 
